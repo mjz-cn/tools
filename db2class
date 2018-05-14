@@ -1,0 +1,124 @@
+#! /usr/local/bin/python3
+import os.path
+import configparser
+import argparse
+from peewee import *
+
+class_fmt = '''package com.kikakeyboard.backend.model.adapterpubsubadmin;
+{imports}
+
+import lombok.Data;
+
+/**
+ * Created by mjz on 16/9/12.
+ */
+@Data
+public class {class_name} {{
+{attributes}}}
+'''
+
+attr_fmt = '\tprivate {attr_type} {name};\n'
+import_fmt = 'import {package};\n'
+
+class TableToJavaClass:
+    def __init__(self, dbconfig, path):
+        self._db = MySQLDatabase(dbconfig['name'], host=dbconfig['host'], 
+            port=dbconfig['port'], user=dbconfig['user'], passwd=dbconfig['password'])
+        self.path = path
+
+    def type_map(self, t):
+        pos = t.find('(')
+        if pos == -1:
+            pos = len(t)
+        t = t[:pos].strip()
+        m = {
+            'varchar':'String',
+            'int':'int',
+            'bigint':'long',
+            'datetime': 'LocalDateTime',
+            'date':'LocalDate',
+            'timestamp':'LocalDateTime',
+            'tinyint':'byte',
+            'smallint': 'short',
+            'double': 'double',
+            'text': 'String',
+            'mediumint': 'int',
+            'char':'String',
+        }
+        imp = ''
+        if m[t].startswith('LocalDate'):
+            imp = import_fmt.format(package='java.time.' + m[t])
+        return m[t], imp
+
+    def getClassName(self, tableName):
+        li = tableName.split('_')
+        r = ''
+        for word in li[1:]:
+            r += word.capitalize()
+        if li[0] == 'r':
+            r += 'Relation'
+        return r
+
+    def generate(self, table):
+        print(table)
+    
+        tab_info_cursor = self._db.execute_sql('desc ' + table)
+        attributes = ''
+        imports = ''
+        for row in tab_info_cursor.fetchall():
+            java_type, imp = self.type_map(row[1])
+            attr = attr_fmt.format(attr_type=java_type, name=row[0])
+            attributes += attr
+            imports += imp
+        
+        class_name = self.getClassName(table)
+        with open(os.path.join(self.path, class_name+'.java'), 'w') as fd:
+            data = class_fmt.format(imports=imports, class_name=class_name, attributes=attributes)
+            fd.write(data)
+
+    def generateAll(self):
+        table_cursor = self._db.execute_sql('show tables')
+        for table in table_cursor.fetchall():
+            table = table[0]
+            self.generate(table)
+
+class TableToGoStruct:
+    def __init__(self, dbconfig, path):
+        pass
+
+    def generate(self, table):
+        pass
+
+    def generateAll(self):
+        pass
+
+if __name__ == '__main__':
+    db = MySQLDatabase('adapter_pubsub_admin', host='127.0.0.1', port=3306, user='root', passwd='')
+
+    ap = argparse.ArgumentParser(description='将mysql表转换成java类')
+    ap.add_argument('-p', '--path', type=str, help='output path', default='')
+    ap.add_argument('-dn', '--dbname', type=str, help='database name', default='adapter_pubsub_admin')
+    ap.add_argument('-dh', '--dbhost', type=str, help='database host', default='127.0.0.1')
+    ap.add_argument('-dp', '--dbport', type=int, help='database port', default=3306)
+    ap.add_argument('-du', '--dbuser', type=str, help='database user', default='root')
+    ap.add_argument('-dpw', '--dbpassword', type=str, help='database password', default='')
+    ap.add_argument('-t', '--generate_type', type=str, help='generate whole database or single table, value: all or :{tablename}', default='all')
+
+    args = ap.parse_args()
+
+    dbconfig = {
+        'name': args.dbname,
+        'host': args.dbhost,
+        'port': args.dbport,
+        'user': args.dbuser,
+        'password': args.dbpassword,
+    }
+
+    t = TableToJavaClass(dbconfig, args.path)
+    if args.generate_type == 'all':
+        t.generateAll()
+    else:
+        t.generate(args.generate_type[1:])
+
+
+
